@@ -140,10 +140,10 @@ double delta_time = 0.0;
 vector<BoxPointType> cub_needrm;
 vector<BoxPointType> cub_needad;
 // deque<sensor_msgs::PointCloud2::ConstPtr> lidar_buffer;
-deque<PointCloudXYZI::Ptr>  lidar_buffer;
-deque<double>          time_buffer;
-deque<sensor_msgs::Imu::ConstPtr> imu_buffer;
-deque<cv::Mat> img_buffer;
+deque<PointCloudXYZI::Ptr>  lidar_buffer;           //lidar输入缓存
+deque<double>          time_buffer;                 //lidar输入帧对应时间戳
+deque<sensor_msgs::Imu::ConstPtr> imu_buffer;       //imu输入缓存
+deque<cv::Mat> img_buffer;                          //img输入缓存
 deque<double>          img_time_buffer;
 vector<bool> point_selected_surf; 
 vector<vector<int>> pointSearchInd_surf; 
@@ -418,7 +418,7 @@ void lasermap_fov_segment()
     // printf("Delete Box: %d\n",int(cub_needrm.size()));
 }
 #endif
-
+//0,异步接收原始lidar数据
 void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg) 
 {
     mtx_buffer.lock();
@@ -441,7 +441,7 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     mtx_buffer.unlock();
     sig_buffer.notify_all();
 }
-
+//0,异步接收原始lidar数据
 void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg) 
 {
     mtx_buffer.lock();
@@ -460,7 +460,7 @@ void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg)
     mtx_buffer.unlock();
     sig_buffer.notify_all();
 }
-
+//0,异步接收原始imu数据
 void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in) 
 {
     publish_count ++;
@@ -490,7 +490,7 @@ cv::Mat getImageFromMsg(const sensor_msgs::ImageConstPtr& img_msg) {
   img = cv_bridge::toCvCopy(img_msg, "bgr8")->image;
   return img;
 }
-
+//0,异步接收原始img数据
 void img_cbk(const sensor_msgs::ImageConstPtr& msg)
 {
     if (!img_en) 
@@ -1132,7 +1132,7 @@ void readParameters(ros::NodeHandle &nh)
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false);
     nh.param<double>("delta_time", delta_time, 0.0);
 }
-
+//全局主函数?
 int main(int argc, char** argv)
 {
     ros::init(argc, argv, "laserMapping");
@@ -1170,10 +1170,10 @@ int main(int argc, char** argv)
 
     /*** variables definition ***/
     #ifndef USE_IKFOM
-    VD(DIM_STATE) solution;
+    VD(DIM_STATE) solution;//实时误差状态解?
     MD(DIM_STATE, DIM_STATE) G, H_T_H, I_STATE;
     V3D rot_add, t_add;
-    StatesGroup state_propagat;
+    StatesGroup state_propagat;//实时真实状态
     PointType pointOri, pointSel, coeff;
     #endif
     //PointCloudXYZI::Ptr corr_normvect(new PointCloudXYZI(100000, 1));
@@ -1229,7 +1229,7 @@ int main(int argc, char** argv)
     #ifdef USE_IKFOM
     double epsi[23] = {0.001};
     fill(epsi, epsi+23, 0.001);
-    kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
+    kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);//esikf的滤波器
     #endif
     /*** debug record ***/
     FILE *fp;
@@ -1257,7 +1257,7 @@ int main(int argc, char** argv)
     {
         if (flg_exit) break;
         ros::spinOnce();
-        if(!sync_packages(LidarMeasures))
+        if(!sync_packages(LidarMeasures)) //同步不同传感器数据,封包. [这里可以做数据剥离,摆脱ros]
         {
             status = ros::ok();
             cv::waitKey(1);

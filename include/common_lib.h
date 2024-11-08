@@ -292,7 +292,7 @@ namespace lidar_selection
     };
 }
 typedef boost::shared_ptr<SparseMap> SparseMapPtr;
-
+//所有待估状态(r p v ba bg g)
 struct StatesGroup
 {
     StatesGroup() {
