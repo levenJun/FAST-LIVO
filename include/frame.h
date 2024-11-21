@@ -65,6 +65,7 @@ public:
   /// The KeyPoints are those five features which are closest to the 4 image corners
   /// and to the center and which have a 3D point assigned. These points are used
   /// to quickly check whether two frames have overlapping field of view.
+  //填充设置5个特征
   void setKeyPoints();
 
   /// Check if we can select five better key-points.

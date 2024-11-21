@@ -27,14 +27,14 @@ class LidarSelector {
     M3D Rli, Rci, Rcw, Jdphi_dR, Jdp_dt, Jdp_dR;
     V3D Pli, Pci, Pcw;
     int* align_flag;
-    int* grid_num;
+    int* grid_num;      //图像网格内容标记,MAP点[lidar-img点],POINT_CLOUD点[纯lidar点],UNKOWN
     int* map_index;
-    float* map_dist;
-    float* map_value;
+    float* map_dist;    //图像网格投影点最小深度值
+    float* map_value;   //图像网格最大的harris响应值
     float* patch_with_border_;
     vector<float> patch_cache;
     int width, height, grid_n_width, grid_n_height, length;
-    SubSparseMap* sub_sparse_map;
+    SubSparseMap* sub_sparse_map;                           //当前单帧匹配到的局部地图点详细信息
     double fx,fy,cx,cy;
     bool ncc_en;
     int debug, patch_size, patch_size_total, patch_size_half;
@@ -45,7 +45,7 @@ class LidarSelector {
     double img_point_cov, outlier_threshold, ncc_thre;
     size_t n_meas_;                //!< Number of measurements
     deque< PointPtr > map_cur_frame_;
-    deque< PointPtr > sub_map_cur_frame_;
+    deque< PointPtr > sub_map_cur_frame_;                   //当前单帧匹配到的体素地图点
     double computeH, ekf_time;
     double ave_total = 0.0;
     int frame_count = 0;
@@ -98,6 +98,7 @@ class LidarSelector {
     void AddPoint(PointPtr pt_new);
     int getBestSearchLevel(const Matrix2d& A_cur_ref, const int max_level);
     void display_keypatch(double time);
+    //单纯就是把预测imu的pose用外参转换到相机pose,设入new_frame_
     void updateFrameState(StatesGroup state);
     V3F getpixel(cv::Mat img, V2D pc);
 
@@ -115,14 +116,19 @@ class LidarSelector {
     PointCloudXYZI::Ptr Map_points_output;
     PointCloudXYZI::Ptr pg_down;
     pcl::VoxelGrid<PointType> downSizeFilter;
-    unordered_map<VOXEL_KEY, VOXEL_POINTS*> feat_map;
+    unordered_map<VOXEL_KEY, VOXEL_POINTS*> feat_map;//[全局] hash 体素地图?
+                                                      //VOXEL_KEY 量化后空间3d索引?
+                                                      //VOXEL_POINTS 特征列表
     unordered_map<VOXEL_KEY, float> sub_feat_map; //timestamp
+                                                  //当前lidar帧检索到的体素列表
     unordered_map<int, Warp*> Warp_map; // reference frame id, A_cur_ref and search_level
+                                        // 匹配到的ref patch块到当前帧的 仿射阵 缓存
+                                        // {观测patch的id, [patch的仿射A阵,patch的塔level]}
 
     vector<VOXEL_KEY> occupy_postions;
     set<VOXEL_KEY> sub_postion;
-    vector<PointPtr> voxel_points_;
-    vector<V3D> add_voxel_points_;
+    vector<PointPtr> voxel_points_;   //图像网格投影点最小深度值,对应的体素内地图点
+    vector<V3D> add_voxel_points_;    //图像网格最大harris响应值对应的 lidar点坐标. [用原始lidar帧所有点, addSparseMap函数计算得到]
 
 
     cv::Mat img_cp, img_rgb;

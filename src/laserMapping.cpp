@@ -1215,8 +1215,8 @@ int main(int argc, char** argv)
     lidar_selector->init();
     
     p_imu->set_extrinsic(Lidar_offset_to_IMU, Lidar_rot_to_IMU);
-    p_imu->set_gyr_cov_scale(V3D(gyr_cov_scale, gyr_cov_scale, gyr_cov_scale));
-    p_imu->set_acc_cov_scale(V3D(acc_cov_scale, acc_cov_scale, acc_cov_scale));
+    p_imu->set_gyr_cov_scale(V3D(gyr_cov_scale, gyr_cov_scale, gyr_cov_scale));//gyro取100 ,在IMU初始化时计算测量值cov会乘上scale
+    p_imu->set_acc_cov_scale(V3D(acc_cov_scale, acc_cov_scale, acc_cov_scale));//acc取10000,在IMU初始化时计算测量值cov会乘上scale*((9.81/acc均值)平方)
     p_imu->set_gyr_bias_cov(V3D(0.00001, 0.00001, 0.00001));
     p_imu->set_acc_bias_cov(V3D(0.00001, 0.00001, 0.00001));
 
@@ -1284,6 +1284,9 @@ int main(int argc, char** argv)
         state_point = kf.get_x();
         pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
         #else
+        // 1,imu前向积分预测
+        //   先验协方差递推待.
+        // 2,用imu积分的pose6d和velocity和gyro和acc测量值,对每个lidar点再作插值积分去畸变?        
         p_imu->Process2(LidarMeasures, state, feats_undistort); 
         state_propagat = state;
         #endif

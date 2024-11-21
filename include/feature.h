@@ -23,6 +23,7 @@
 
 namespace lidar_selection {
 
+//观测的patch块
 // A salient image region that is tracked across frames.
 struct Feature
 {
@@ -32,7 +33,7 @@ struct Feature
     CORNER,
     EDGELET
   };
-  int id_;
+  int id_;              //创建的Frame对应的id?
   FeatureType type;     //!< Type can be corner or edgelet.
   Frame* frame;         //!< Pointer to frame in which the feature was detected.
   cv::Mat img;

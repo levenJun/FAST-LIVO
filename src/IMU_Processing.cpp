@@ -607,7 +607,9 @@ void ImuProcess::Process(const LidarMeasureGroup &lidar_meas, StatesGroup &stat,
   
   // cout<<"[ IMU Process ]: Time: "<<t3 - t1<<endl;
 }
-
+// 1,imu前向积分预测
+//   先验协方差递推待.
+// 2,用imu积分的pose6d和velocity和gyro和acc测量值,对每个lidar点再作插值积分去畸变?
 void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out)
 {
   /*** add the imu of the last frame-tail to the of current frame-head ***/
@@ -682,7 +684,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
     // #endif
 
     angvel_avr -= state_inout.bias_g;
-    acc_avr     = acc_avr * G_m_s2 / mean_acc.norm() - state_inout.bias_a;
+    acc_avr     = acc_avr * G_m_s2 / mean_acc.norm() - state_inout.bias_a; //这里为什么对原始acc测量值做了粗糙的归一化?
 
     if(head->header.stamp.toSec() < last_lidar_end_time_)
     {
@@ -702,9 +704,9 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
     cov_w.setZero();
 
     F_x.block<3,3>(0,0)  = Exp(angvel_avr, - dt);
-    F_x.block<3,3>(0,9)  = - Eye3d * dt;
+    F_x.block<3,3>(0,9)  = - Eye3d * dt;  //这里把Jr简化为I矩阵了
     // F_x.block<3,3>(3,0)  = R_imu * off_vel_skew * dt;
-    F_x.block<3,3>(3,6)  = Eye3d * dt;
+    F_x.block<3,3>(3,6)  = Eye3d * dt;//平移积分简化为P2 = P1+ V1*t
     F_x.block<3,3>(6,0)  = - R_imu * acc_avr_skew * dt;
     F_x.block<3,3>(6,12) = - R_imu * dt;
     F_x.block<3,3>(6,15) = Eye3d * dt;
@@ -808,6 +810,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
   }
 }
 
+//初始化IMU相关状态:初始重力g向量,acc的初始cov,gyro的初始cov
 void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, PointCloudXYZI::Ptr cur_pcl_un_)
 {
   double t1,t2,t3;

@@ -68,7 +68,7 @@ void Frame::addFeature(FeaturePtr ftr)
 {
   fts_.push_back(ftr);
 }
-
+//填充设置5个特征
 void Frame::setKeyPoints()
 {
   for(size_t i = 0; i < 5; ++i)
@@ -84,14 +84,14 @@ void Frame::checkKeyPoints(FeaturePtr ftr)
   const int cv = cam_->height()/2;
 
   // center pixel
-  if(key_pts_[0] == nullptr)
+  if(key_pts_[0] == nullptr)//图像最中心特征
     key_pts_[0] = ftr;
 
   else if(std::max(std::fabs(ftr->px[0]-cu), std::fabs(ftr->px[1]-cv))
         < std::max(std::fabs(key_pts_[0]->px[0]-cu), std::fabs(key_pts_[0]->px[1]-cv)))
     key_pts_[0] = ftr;
 
-  if(ftr->px[0] >= cu && ftr->px[1] >= cv)
+  if(ftr->px[0] >= cu && ftr->px[1] >= cv)//图像最右上角特征
   {
     if(key_pts_[1] == nullptr)
       key_pts_[1] = ftr;
@@ -100,7 +100,7 @@ void Frame::checkKeyPoints(FeaturePtr ftr)
       key_pts_[1] = ftr;
   }
 
-  if(ftr->px[0] >= cu && ftr->px[1] < cv)
+  if(ftr->px[0] >= cu && ftr->px[1] < cv)//图像最右下角特征
   {
     if(key_pts_[2] == nullptr)
       key_pts_[2] = ftr;
@@ -111,7 +111,7 @@ void Frame::checkKeyPoints(FeaturePtr ftr)
       key_pts_[2] = ftr;
   }
 
-  if(ftr->px[0] < cu && ftr->px[1] < cv)
+  if(ftr->px[0] < cu && ftr->px[1] < cv)//图像最左下角特征
   {
     if(key_pts_[3] == nullptr)
       key_pts_[3] = ftr;
@@ -120,7 +120,7 @@ void Frame::checkKeyPoints(FeaturePtr ftr)
       key_pts_[3] = ftr;
   }
 
-  if(ftr->px[0] < cu && ftr->px[1] >= cv)  
+  if(ftr->px[0] < cu && ftr->px[1] >= cv)//图像最左上角特征
   // if(ftr->px[0] < cv && ftr->px[1] >= cv)
   {
     if(key_pts_[4] == nullptr)

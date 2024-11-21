@@ -137,7 +137,9 @@ bool Point::getClosePose(const FramePtr& new_frame, FeaturePtr& ftr) const
 
   return true;
 }
-
+//当前特征点有很多观测Patch,每个观测Patch光心和当前点连线代表观测视角
+//取和 framepos 观测视角最近的Patch 作为ftr
+//如果最近 ftr 观测视角夹角小于60度 返回 ftr同时返回true
 bool Point::getCloseViewObs(const Vector3d& framepos, FeaturePtr& ftr, const Vector2d& cur_px) const
 {
   // TODO: get frame with same point of view AND same pyramid level!
