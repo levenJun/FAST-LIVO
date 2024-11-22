@@ -217,7 +217,7 @@ bool Point::getCloseViewObs_test(const Vector3d& framepos, FeaturePtr& ftr, cons
 
   return true;
 }
-
+//以framepos为起点,获取距离最远的观测patch
 void Point::getFurthestViewObs(const Vector3d& framepos, FeaturePtr& ftr) const
 {
   // Vector3d obs_dir(framepos - pos_); obs_dir.normalize();

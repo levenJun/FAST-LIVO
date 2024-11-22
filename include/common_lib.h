@@ -267,7 +267,7 @@ namespace lidar_selection
         vector<float> align_errors;
         vector<float> propa_errors;
         vector<float> errors;
-        vector<int> index;              //当前帧网格idx
+        vector<int> index;              //匹配到的当前帧网格idx
         vector<vector<float>> patch;    //匹配到的体素地图点的参考patch块,逆仿射块[3层]
         vector<int> search_levels;
         vector<PointPtr> voxel_points;  //匹配到的体素地图点

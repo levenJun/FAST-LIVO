@@ -55,7 +55,7 @@ public:
   int                         n_succeeded_reproj_;      //!< Number of succeeded reprojections. Used to assess the quality of the point.
   int                         last_structure_optim_;    //!< Timestamp of last point optimization
   bool                        have_scaled;
-  float                       value;
+  float                       value;                    //harris响应值?
   Point(const Vector3d& pos);
   Point(const Vector3d& pos, FeaturePtr ftr);
   ~Point();

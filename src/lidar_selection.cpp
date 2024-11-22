@@ -89,6 +89,7 @@ void LidarSelector::reset_grid()
     add_voxel_points_.reserve(length);
 }
 
+//uv对相机系坐标Pc的雅可比
 void LidarSelector::dpi(V3D p, MD(2,3)& J) {
     const double x = p[0];
     const double y = p[1];
@@ -141,6 +142,7 @@ void LidarSelector::getpatch(cv::Mat img, V2D pc, float* patch_tmp, int level)
 }
 
 // lidar点投影到当前网格,新建 Point点, Feature观测, 并将新建Point点添加进全局体素地图 feat_map
+// [单个grid内已经匹配到的体素地图点,如果响应值被超过,也会直接新建point]
 // 1)将原始lidar帧所有点全部投影到当前图像网格内,单个网格保留harris值最大的投影点
 // 2)有效投影网格都新建 Point点, Feature观测, 并添加到当前 new_frame_中
 // 3)将Point点添加进全局体素地图 feat_map
@@ -206,6 +208,7 @@ void LidarSelector::addSparseMap(cv::Mat img, PointCloudXYZI::Ptr pg)
     // printf("B3. : %.6lf \n", t_b3);
 }
 
+//将 pt_new 添加进全局体素地图 feat_map
 void LidarSelector::AddPoint(PointPtr pt_new)
 {
     V3D pt_w(pt_new->pos_[0], pt_new->pos_[1], pt_new->pos_[2]);
@@ -802,7 +805,7 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
     float error=0.0, last_error=total_residual, patch_error=0.0, last_patch_error=0.0, propa_error=0.0;
     // MatrixXd H;
     bool z_init = true;
-    const int H_DIM = total_points * patch_size_total;
+    const int H_DIM = total_points * patch_size_total;//总残差维度=总patch数 * 单个patch像素数
     
     // K.resize(H_DIM, H_DIM);
     z.resize(H_DIM);
@@ -827,7 +830,7 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
         V3D Pwi(state->pos_end);
         Rcw = Rci * Rwi.transpose();
         Pcw = -Rci*Rwi.transpose()*Pwi + Pci;
-        Jdp_dt = Rci * Rwi.transpose();
+        Jdp_dt = Rci * Rwi.transpose();//Pc对位姿t的雅可比,但是缺了*(-1)
         
         M3D p_hat;
         int i;
@@ -843,27 +846,38 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
 
             if(pt==nullptr) continue;
 
-            V3D pf = Rcw * pt->pos_ + Pcw;
-            pc = cam->world2cam(pf);
+            V3D pf = Rcw * pt->pos_ + Pcw;      //匹配patch中心点相机系3d坐标Pc
+            pc = cam->world2cam(pf);            //匹配patch在cur帧的像素坐标
             // if((level==2 && iteration==0) || (level==1 && iteration==0) || level==0)
             {
-                dpi(pf, Jdpi);
+                dpi(pf, Jdpi);                  //uv对相机系坐标Pc的雅可比
                 p_hat << SKEW_SYM_MATRX(pf);
             }
+            //双线性插值计算 pc 点亚像素精度的 光度
             const float u_ref = pc[0];
             const float v_ref = pc[1];
-            const int u_ref_i = floorf(pc[0]/scale)*scale; 
+            const int u_ref_i = floorf(pc[0]/scale)*scale;    //先缩小到塔高层得到对应的 int 像素坐标,再放大还原到0层的得到原始图像坐标
             const int v_ref_i = floorf(pc[1]/scale)*scale;
-            const float subpix_u_ref = (u_ref-u_ref_i)/scale;
+            const float subpix_u_ref = (u_ref-u_ref_i)/scale; //在0层的插值ratio再缩小到塔高层
             const float subpix_v_ref = (v_ref-v_ref_i)/scale;
-            const float w_ref_tl = (1.0-subpix_u_ref) * (1.0-subpix_v_ref);
+            const float w_ref_tl = (1.0-subpix_u_ref) * (1.0-subpix_v_ref);//在塔高层上双线性插值权重
             const float w_ref_tr = subpix_u_ref * (1.0-subpix_v_ref);
             const float w_ref_bl = (1.0-subpix_u_ref) * subpix_v_ref;
             const float w_ref_br = subpix_u_ref * subpix_v_ref;
             
             vector<float> P = sub_sparse_map->patch[i];
-            for (int x=0; x<patch_size; x++) 
+            for (int x=0; x<patch_size; x++) //这个x实际是竖直的y
             {
+                //这里的图像梯度是在cur图上求得的,所以是正向梯度法
+                
+                //这里求塔高层图像上的patch块梯度. 塔高层又没有计算金字塔图像,所以需要到塔0层取具体的灰度值.                
+                //考虑金字塔尺度, 就固定patch块中心在塔0层坐标(u_ref_i,v_ref_i), 然后在塔高层单步移动1个像素,然后投射到塔0层就是移动1*scale个像素
+                //      所以塔高层移动(step_x, step_y),对应到塔0层就是(u_ref_i + step_x*scale, v_ref_i + step_y*scale)
+                //      确定图像x,y坐标,一维展开坐标= y*width + x
+                //      考虑金字塔尺度一维展开就是 = (v_ref_i + step_y*scale)*width + u_ref_i + step_x*scale
+                //考虑梯度计算,du要用(x+1,y) (x-1,y)点, dv要用(x,y+1) (x,y-1)点,考虑尺度du要用(x+scale,y) (x-scale,y)点,dv要用(x,y+scale) (x,y-scale)点
+                //考虑双线性插值,上面用到的4个点, 以其坐标为左上角点,然后做双线性插值重新得到 4个点坐标再来计算 du,dv
+
                 uint8_t* img_ptr = (uint8_t*) img.data + (v_ref_i+x*scale-patch_size_half*scale)*width + u_ref_i-patch_size_half*scale;
                 for (int y=0; y<patch_size; ++y, img_ptr+=scale) 
                 {
@@ -873,14 +887,19 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
                                 -(w_ref_tl*img_ptr[-scale] + w_ref_tr*img_ptr[0] + w_ref_bl*img_ptr[scale*width-scale] + w_ref_br*img_ptr[scale*width]));
                     float dv = 0.5f * ((w_ref_tl*img_ptr[scale*width] + w_ref_tr*img_ptr[scale+scale*width] + w_ref_bl*img_ptr[width*scale*2] + w_ref_br*img_ptr[width*scale*2+scale])
                                 -(w_ref_tl*img_ptr[-scale*width] + w_ref_tr*img_ptr[-scale*width+scale] + w_ref_bl*img_ptr[0] + w_ref_br*img_ptr[scale]));
-                    Jimg << du, dv;
-                    Jimg = Jimg * (1.0/scale);
-                    Jdphi = Jimg * Jdpi * p_hat;
+                    Jimg << du, dv;             //塔0层得到的梯度
+                    Jimg = Jimg * (1.0/scale);  //将梯度缩小到塔高层
+                    
+                    //这里考虑了camera和imu外参后, 再计算err到imu位姿的雅可比.
+                    // [warn:公式可以再推导再验证]
+                    Jdphi = Jimg * Jdpi * p_hat;//这个已经是光度err对旋转R李代数的雅可比了!
                     Jdp = -Jimg * Jdpi;
                     JdR = Jdphi * Jdphi_dR + Jdp * Jdp_dR;
-                    Jdt = Jdp * Jdp_dt;
+                    Jdt = Jdp * Jdp_dt;         //光度err对位姿t的雅可比[ok]
                     //}
+                    //计算光度残差, 还是要双线性插值得到cur帧(x,y)处的灰度 - ref的patch对应尺度对应位置的灰度
                     double res = w_ref_tl*img_ptr[0] + w_ref_tr*img_ptr[scale] + w_ref_bl*img_ptr[scale*width] + w_ref_br*img_ptr[scale*width+scale]  - P[patch_size_total*level + x*patch_size+y];
+                    //第i个patch了,前面已经有i*patch_size_total残差计算好了,这里是第i个patch的(x,y)位置的残差
                     z(i*patch_size_total+x*patch_size+y) = res;
                     // float weight = 1.0;
                     // if(iteration > 0)
@@ -890,6 +909,8 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
                     n_meas_++;
                     // H.block<1,6>(i*patch_size_total+x*patch_size+y,0) << JdR*weight, Jdt*weight;
                     // if((level==2 && iteration==0) || (level==1 && iteration==0) || level==0)
+                    
+                    //H_sub是具体patch的具体(x,y)位置的残差对pose6d的雅可比
                     H_sub.block<1,6>(i*patch_size_total+x*patch_size+y,0) << JdR, Jdt;
                 }
             }  
@@ -904,6 +925,7 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
 
         // double t3 = omp_get_wtime();
 
+        // 下面是Esikf的后验刷新公式,可以再推导再验证
         if (error <= last_error) 
         {
             old_state = (*state);
@@ -955,7 +977,10 @@ void LidarSelector::updateFrameState(StatesGroup state)
     Pcw = -Rci*Rwi.transpose()*Pwi + Pci;
     new_frame_->T_f_w_ = SE3(Rcw, Pcw);
 }
-
+//将当前帧新观测的patch添加进对应Point中
+// 1)用后验刷新后的pose,重新计算point到当前帧的投影像素pc
+// 2)add check: 距离上个patch的帧pose超过50cm或者10度, 距离上个patch的投影像素超过40
+// 3)delete冗余 patch: 单个point最大观测数20个, 优先删除距离当前帧平移最远的patch观测
 void LidarSelector::addObservation(cv::Mat img)
 {
     int total_points = sub_sparse_map->index.size();
@@ -1094,21 +1119,24 @@ void LidarSelector::detect(cv::Mat img, PointCloudXYZI::Ptr pg)
     }
 
     double t1 = omp_get_wtime();
-    // 当前帧图像划分grid网格后,与体素地图做patch匹配,结果缓存进 sub_sparse_map
+    // 当前帧图像划分grid网格后, 检索体素地图并做patch匹配,结果缓存进 sub_sparse_map. [本步骤前sub_sparse_map被实时清空]
     addFromSparseMap(img, pg);
 
     double t3 = omp_get_wtime();
     // lidar点投影到当前网格,新建 Point点, Feature观测, 并将新建Point点添加进全局体素地图 feat_map
+    // [单个grid内已经匹配到的体素点,如果响应值被超过,也会直接新建point]
+    // [本步骤新新建点到 全局 feat_map, 但是没有添加到局部 sub_sparse_map]
     addSparseMap(img, pg);
 
     double t4 = omp_get_wtime();
     
     // computeH = ekf_time = 0.0;
-    
+    //利用光度误差作后验刷新.[再细看,再验证]
     ComputeJ(img);
 
     double t5 = omp_get_wtime();
 
+    //后验刷新了当前帧pose, 基于此,将当前帧新观测的patch添加进对应Point中
     addObservation(img);
     
     double t2 = omp_get_wtime();
