@@ -22,7 +22,7 @@ class LidarSelector {
     int grid_size;
     vk::AbstractCamera* cam;
     SparseMap* sparse_map;
-    StatesGroup* state;
+    StatesGroup* state;                           //系统估计状态
     StatesGroup* state_propagat;
     M3D Rli, Rci, Rcw, Jdphi_dR, Jdp_dt, Jdp_dR;
     V3D Pli, Pci, Pcw;

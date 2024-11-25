@@ -1340,7 +1340,11 @@ int main(int argc, char** argv)
                 //     pointBodyToWorld(&feats_undistort->points[i], \
                 //                         &laserCloudWorld->points[i]);
                 // }
-
+                //进入img的处理流程
+                //  1,F2M的patch投影匹配: 即以lidar引导去检索局部Map, 投影到当前图像grid作patch的匹配
+                //  2,F2F的patch投影创建新点:  即用当前lidar帧投影到当前图像上, 新建hash体素点
+                //  3,基于F2M的匹配作esikf后验刷新: 进行的3层金字塔的光度的esikf后验刷新
+                //  4,基于F2M的匹配向匹配的体素点添加新patch观测.
                 lidar_selector->detect(LidarMeasures.measures.back().img, pcl_wait_pub);
                 // int size = lidar_selector->map_cur_frame_.size();
                 int size_sub = lidar_selector->sub_map_cur_frame_.size();

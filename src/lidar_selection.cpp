@@ -931,18 +931,26 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
             old_state = (*state);
             last_error = error;
 
-            // K = (H.transpose() / img_point_cov * H + state->cov.inverse()).inverse() * H.transpose() / img_point_cov;
-            // auto vec = (*state_propagat) - (*state);
-            // G = K*H;
-            // (*state) += (-K*z + vec - G*vec);
+            //[不是]这是FastLio2原始公式,基于SMW横等式对K变形后验刷新
+            //这是按照标准esikf推导的后验刷新公式
+                // K是基于SMW横等式对K变形后结果
+                // img_point_cov:每像素光度误差,默认配置取100
+            K = (H.transpose() / img_point_cov * H + state->cov.inverse()).inverse() * H.transpose() / img_point_cov;
+            //这个vec是误差状态期望
+            auto vec = (*state_propagat) - (*state);
+            G = K*H;
+            (*state) += (-K*z + vec - G*vec);
 
             auto &&H_sub_T = H_sub.transpose();
-            H_T_H.block<6,6>(0,0) = H_sub_T * H_sub;
+            H_T_H.block<6,6>(0,0) = H_sub_T * H_sub;//H_T_H是全状态18维的HtH, 其它状态雅可比都是0,所以只需要填充左上角6*6小块
+            //K_1是全状态的K值,是18*n维
+            //因为Q只是单值,所以将SMW公式的K化简就得到下面的K1值,但是还缺一个H^t,即 K = K1 * H^t
             MD(DIM_STATE, DIM_STATE) &&K_1 = (H_T_H + (state->cov / img_point_cov).inverse()).inverse();
-            auto &&HTz = H_sub_T * z;
+            auto &&HTz = H_sub_T * z;                       //补上缺的H^t,小状态6*n维
             // K = K_1.block<DIM_STATE,6>(0,0) * H_sub_T;
-            auto vec = (*state_propagat) - (*state);
-            G.block<DIM_STATE,6>(0,0) = K_1.block<DIM_STATE,6>(0,0) * H_T_H.block<6,6>(0,0);
+            auto vec = (*state_propagat) - (*state);        //u:es的先验.全状态18维
+            G.block<DIM_STATE,6>(0,0) = K_1.block<DIM_STATE,6>(0,0) * H_T_H.block<6,6>(0,0);//KH = K1*H^t*H,小状态18*6维
+            //解为: -Kz+(I-KH)u=-K1*H^t*z + u - K1*H^t*H*u
             auto solution = - K_1.block<DIM_STATE,6>(0,0) * HTz + vec - G.block<DIM_STATE,6>(0,0) * vec.block<6,1>(0,0);
             (*state) += solution;
             auto &&rot_add = solution.block<3,1>(0,0);
@@ -1042,13 +1050,15 @@ void LidarSelector::ComputeJ(cv::Mat img)
     float error = 1e10;
     float now_error = error;
 
+    //3层金字塔,逐级,esikf后验刷新
     for (int level=2; level>=0; level--) 
     {
+        //单层的esikf后验刷新
         now_error = UpdateState(img, error, level);
     }
     if (now_error < error)
     {
-        state->cov -= G*state->cov;
+        state->cov -= G*state->cov;//这是迭代完成的最终P刷新,G=KH
     }
     updateFrameState(*state);
 }
@@ -1096,6 +1106,10 @@ V3F LidarSelector::getpixel(cv::Mat img, V2D pc)
 }
 
 //进入img的处理流程
+//  1,F2M的patch投影匹配: 即以lidar引导去检索局部Map, 投影到当前图像grid作patch的匹配
+//  2,F2F的patch投影创建新点:  即用当前lidar帧投影到当前图像上, 新建hash体素点
+//  3,基于F2M的匹配作esikf后验刷新: 进行的3层金字塔的光度的esikf后验刷新
+//  4,基于F2M的匹配向匹配的体素点添加新patch观测.
 void LidarSelector::detect(cv::Mat img, PointCloudXYZI::Ptr pg) 
 {
     if(width!=img.cols || height!=img.rows)
@@ -1119,10 +1133,12 @@ void LidarSelector::detect(cv::Mat img, PointCloudXYZI::Ptr pg)
     }
 
     double t1 = omp_get_wtime();
+    //  1,F2M的patch投影匹配: 即以lidar引导去检索局部Map, 投影到当前图像grid作patch的匹配
     // 当前帧图像划分grid网格后, 检索体素地图并做patch匹配,结果缓存进 sub_sparse_map. [本步骤前sub_sparse_map被实时清空]
     addFromSparseMap(img, pg);
 
     double t3 = omp_get_wtime();
+    //  2,F2F的patch投影创建新点:  即用当前lidar帧投影到当前图像上, 新建hash体素点
     // lidar点投影到当前网格,新建 Point点, Feature观测, 并将新建Point点添加进全局体素地图 feat_map
     // [单个grid内已经匹配到的体素点,如果响应值被超过,也会直接新建point]
     // [本步骤新新建点到 全局 feat_map, 但是没有添加到局部 sub_sparse_map]
@@ -1131,11 +1147,13 @@ void LidarSelector::detect(cv::Mat img, PointCloudXYZI::Ptr pg)
     double t4 = omp_get_wtime();
     
     // computeH = ekf_time = 0.0;
-    //利用光度误差作后验刷新.[再细看,再验证]
+    //  3,基于F2M的匹配作esikf后验刷新: 进行的3层金字塔的光度的esikf后验刷新
+    //利用光度误差作esikf后验刷新.[再细看,再验证]
     ComputeJ(img);
 
     double t5 = omp_get_wtime();
 
+    //  4,基于F2M的匹配向匹配的体素点添加新patch观测.
     //后验刷新了当前帧pose, 基于此,将当前帧新观测的patch添加进对应Point中
     addObservation(img);
     
