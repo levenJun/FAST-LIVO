@@ -145,10 +145,12 @@ deque<double>          time_buffer;                 //lidar输入帧对应时间
 deque<sensor_msgs::Imu::ConstPtr> imu_buffer;       //imu输入缓存
 deque<cv::Mat> img_buffer;                          //img输入缓存
 deque<double>          img_time_buffer;
-vector<bool> point_selected_surf; 
+vector<bool> point_selected_surf;                   //标记有效surf点,当前lidar帧的点
+                                                        //1,拟合平面有效
+                                                        //2,10米远的lidar点,点到面距离1米以内
 vector<vector<int>> pointSearchInd_surf; 
-vector<PointVector> Nearest_Points; 
-vector<double> res_last;
+vector<PointVector> Nearest_Points;                 //有效surf点,在点云地图中最近的5个点
+vector<double> res_last;                            //有效surf点,点到面距离的abs值
 vector<double> extrinT(3, 0.0);
 vector<double> extrinR(9, 0.0);
 vector<double> cameraextrinT(3, 0.0);
@@ -162,12 +164,12 @@ PointCloudXYZI::Ptr cube_points_add(new PointCloudXYZI());
 PointCloudXYZI::Ptr map_cur_frame_point(new PointCloudXYZI());
 PointCloudXYZI::Ptr sub_map_cur_frame_point(new PointCloudXYZI());
 
-PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());
-PointCloudXYZI::Ptr feats_down_body(new PointCloudXYZI());
+PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());  //当前lidar帧全分辨率点
+PointCloudXYZI::Ptr feats_down_body(new PointCloudXYZI());  //feats_undistort降采样后点
 PointCloudXYZI::Ptr feats_down_world(new PointCloudXYZI());
-PointCloudXYZI::Ptr normvec(new PointCloudXYZI());
-PointCloudXYZI::Ptr laserCloudOri(new PointCloudXYZI());
-PointCloudXYZI::Ptr corr_normvect(new PointCloudXYZI());
+PointCloudXYZI::Ptr normvec(new PointCloudXYZI());           //(x,y,z)拟合的平面法向量,(intensity)点到面距离(未abs)
+PointCloudXYZI::Ptr laserCloudOri(new PointCloudXYZI());     //feats_down_body剔除无效surf点后有效点
+PointCloudXYZI::Ptr corr_normvect(new PointCloudXYZI());     //feats_down_body剔除无效surf点后有效点对应的normvect
 
 pcl::VoxelGrid<PointType> downSizeFilterSurf;
 pcl::VoxelGrid<PointType> downSizeFilterMap;
@@ -358,6 +360,9 @@ BoxPointType get_cube_point(float xmin, float ymin, float zmin, float xmax, floa
 #ifndef USE_ikdforest
 BoxPointType LocalMap_Points;
 bool Localmap_Initialized = false;
+//lidar地图缓存在一个cube内,随着当前帧pose移动,需要重新画cube边界,并清除新边界外缓存点
+// 1,重画cube边界
+// 2,删除新边界外的old缓存地图点
 void lasermap_fov_segment()
 {
     cub_needrm.clear();
@@ -371,7 +376,7 @@ void lasermap_fov_segment()
     #else
     V3D pos_LiD = state.pos_end;
     #endif
-    if (!Localmap_Initialized){
+    if (!Localmap_Initialized){//整个Lidar有一个固定的边界大小范围
         //if (cube_len <= 2.0 * MOV_THRESHOLD * DET_RANGE) throw std::invalid_argument("[Error]: Local Map Size is too small! Please change parameter \"cube_side_length\" to larger than %d in the launch file.\n");
         for (int i = 0; i < 3; i++){
             LocalMap_Points.vertex_min[i] = pos_LiD(i) - cube_len / 2.0;
@@ -388,13 +393,14 @@ void lasermap_fov_segment()
         dist_to_map_edge[i][1] = fabs(pos_LiD(i) - LocalMap_Points.vertex_max[i]);
         if (dist_to_map_edge[i][0] <= MOV_THRESHOLD * DET_RANGE || dist_to_map_edge[i][1] <= MOV_THRESHOLD * DET_RANGE) need_move = true;
     }
-    if (!need_move) return;
+    // need_move:true-即当前帧pose刚好在cube的边界附近晃荡.那么就需要重新画cube边界
+    if (!need_move) return;//无需重新画cube边界,直接返回
     BoxPointType New_LocalMap_Points, tmp_boxpoints;
     New_LocalMap_Points = LocalMap_Points;
     float mov_dist = max((cube_len - 2.0 * MOV_THRESHOLD * DET_RANGE) * 0.5 * 0.9, double(DET_RANGE * (MOV_THRESHOLD -1)));
     for (int i = 0; i < 3; i++){
         tmp_boxpoints = LocalMap_Points;
-        if (dist_to_map_edge[i][0] <= MOV_THRESHOLD * DET_RANGE){
+        if (dist_to_map_edge[i][0] <= MOV_THRESHOLD * DET_RANGE){//在小边界附近,那么cube边界需要向更小处move
             New_LocalMap_Points.vertex_max[i] -= mov_dist;
             New_LocalMap_Points.vertex_min[i] -= mov_dist;
             tmp_boxpoints.vertex_min[i] = LocalMap_Points.vertex_max[i] - mov_dist;
@@ -408,7 +414,7 @@ void lasermap_fov_segment()
             // printf("Delete Box is (%0.2f,%0.2f) (%0.2f,%0.2f) (%0.2f,%0.2f)\n", tmp_boxpoints.vertex_min[0],tmp_boxpoints.vertex_max[0],tmp_boxpoints.vertex_min[1],tmp_boxpoints.vertex_max[1],tmp_boxpoints.vertex_min[2],tmp_boxpoints.vertex_max[2]);                     
         }
     }
-    LocalMap_Points = New_LocalMap_Points;
+    LocalMap_Points = New_LocalMap_Points;//重画的边界
 
     points_cache_collect();
     double delete_begin = omp_get_wtime();
@@ -1395,11 +1401,12 @@ int main(int argc, char** argv)
 
         /*** Segment the map in lidar FOV ***/
         #ifndef USE_ikdforest            
+            //lidar地图缓存在一个cube内,随着当前帧pose移动,需要重新画cube边界,并清除新边界外缓存点
             lasermap_fov_segment();
         #endif
         /*** downsample the feature points in a scan ***/
         downSizeFilterSurf.setInputCloud(feats_undistort);
-        downSizeFilterSurf.filter(*feats_down_body);
+        downSizeFilterSurf.filter(*feats_down_body);//将当前帧原始lidar点降采样
     #ifdef USE_ikdtree
         /*** initialize the map kdtree ***/
         #ifdef USE_ikdforest
@@ -1506,6 +1513,11 @@ int main(int argc, char** argv)
 
         if(lidar_en)
         {
+            //lidar的esikf刷新
+                //-1,nearest_search_en. lidar帧到地图邻近匹配刷新时机: 首次迭代; 收敛;
+                //-2,EKF_stop_flg. 完成迭代条件: 场景退化; 收敛计数超过3次; 超过最大迭代次数
+            //1,点到地图面匹配. 临近5点拟合平面
+            //2,基于点到面约束,作esikf后验刷新. 通用的esikf刷新.
             for (iterCount = -1; iterCount < NUM_MAX_ITERATIONS && flg_EKF_inited; iterCount++) 
             {
                 match_start = omp_get_wtime();
@@ -1523,8 +1535,8 @@ int main(int argc, char** argv)
                 // normvec->resize(feats_down_size);
                 for (int i = 0; i < feats_down_size; i++)
                 {
-                    PointType &point_body  = feats_down_body->points[i];
-                    PointType &point_world = feats_down_world->points[i];
+                    PointType &point_body  = feats_down_body->points[i];        //当前帧原始点(lidar系)
+                    PointType &point_world = feats_down_world->points[i];       //当前帧原始点(世界系)
                     V3D p_body(point_body.x, point_body.y, point_body.z);
                     /* transform to world frame */
                     pointBodyToWorld(&point_body, &point_world);
@@ -1569,14 +1581,17 @@ int main(int argc, char** argv)
                     // }
                     if (!point_selected_surf[i] || points_near.size() < NUM_MATCH_POINTS) continue;
 
-                    VF(4) pabcd;
+                    VF(4) pabcd;                    //5点拟合到的平面参数
                     point_selected_surf[i] = false;
+                    //直接线性拟合,且要求5点所有点距平面在0.1米以内
                     if (esti_plane(pabcd, points_near, 0.1f)) //(planeValid)
                     {
+                        // pd2:点到平面距离(未加abs)
+                        // s:  将距离值归一化(基于点射线长度)
                         float pd2 = pabcd(0) * point_world.x + pabcd(1) * point_world.y + pabcd(2) * point_world.z + pabcd(3);
                         float s = 1 - 0.9 * fabs(pd2) / sqrt(p_body.norm());
 
-                        if (s > 0.9)
+                        if (s > 0.9)//大概等效于10米远的点,要求点到拟合平面的距离1米以内即认为Ok
                         {
                             point_selected_surf[i] = true;
                             normvec->points[i].x = pabcd(0);
@@ -1624,11 +1639,11 @@ int main(int argc, char** argv)
                     V3D norm_vec(norm_p.x, norm_p.y, norm_p.z);
 
                     /*** calculate the Measuremnt Jacobian matrix H ***/
-                    V3D A(point_crossmat * state.rot_end.transpose() * norm_vec);
-                    Hsub.row(i) << VEC_FROM_ARRAY(A), norm_p.x, norm_p.y, norm_p.z;
+                    V3D A(point_crossmat * state.rot_end.transpose() * norm_vec);//这是err对旋转雅可比的转置,本来是1*3的,这里就转置成3*1了
+                    Hsub.row(i) << VEC_FROM_ARRAY(A), norm_p.x, norm_p.y, norm_p.z;//这是是err对Rt的雅可比,1*6
 
                     /*** Measuremnt: distance to the closest surface/corner ***/
-                    meas_vec(i) = - norm_p.intensity;
+                    meas_vec(i) = - norm_p.intensity;   //点到面距离残差,取符号是把后面update的负号放这里了
                 }
                 solve_const_H_time += omp_get_wtime() - solve_start;
 
@@ -1664,8 +1679,9 @@ int main(int argc, char** argv)
                 }
                 else
                 {
+                    //下面就是通用的esikf刷新公式了
                     auto &&Hsub_T = Hsub.transpose();
-                    auto &&HTz = Hsub_T * meas_vec;
+                    auto &&HTz = Hsub_T * meas_vec;         //meas_vec = -err
                     H_T_H.block<6,6>(0,0) = Hsub_T * Hsub;
                     // EigenSolver<Matrix<double, 6, 6>> es(H_T_H.block<6,6>(0,0));
                     MD(DIM_STATE, DIM_STATE) &&K_1 = \
@@ -1674,6 +1690,8 @@ int main(int argc, char** argv)
                     auto vec = state_propagat - state;
                     solution = K_1.block<DIM_STATE,6>(0,0) * HTz + vec - G.block<DIM_STATE,6>(0,0) * vec.block<6,1>(0,0);
 
+                    //lidar场景退化check,HtH的特征值判断
+                    //退化就不用lidar刷新了 continue
                     int minRow, minCol;
                     if(0)//if(V.minCoeff(&minRow, &minCol) < 1.0f)
                     {
@@ -1688,7 +1706,7 @@ int main(int argc, char** argv)
                     rot_add = solution.block<3,1>(0,0);
                     t_add   = solution.block<3,1>(3,0);
 
-                    if ((rot_add.norm() * 57.3 < 0.01) && (t_add.norm() * 100 < 0.015))
+                    if ((rot_add.norm() * 57.3 < 0.01) && (t_add.norm() * 100 < 0.015))//迭代退出条件
                     {
                         flg_EKF_converged = true;
                     }
@@ -1745,6 +1763,7 @@ int main(int argc, char** argv)
         publish_odometry(pubOdomAftMapped);
 
         /*** add the feature points to map kdtree ***/
+        //3,将lidar点降采样后转到世界系,然后添加到 ikdtree
         t3 = omp_get_wtime();
         map_incremental();
         t5 = omp_get_wtime();

@@ -618,7 +618,7 @@ void LidarSelector::addFromSparseMap(cv::Mat img, PointCloudXYZI::Ptr pg)
             }
             if(error > outlier_threshold*patch_size_total) continue;
             
-            sub_map_cur_frame_.push_back(pt);
+            sub_map_cur_frame_.push_back(pt);                           //F2M匹配到的hash体素点
 
             sub_sparse_map->propa_errors.push_back(error);
             sub_sparse_map->search_levels.push_back(search_level);
