@@ -1351,7 +1351,7 @@ int main(int argc, char** argv)
                 //  2,F2F的patch投影创建新点:  即用当前lidar帧投影到当前图像上, 新建hash体素点
                 //  3,基于F2M的匹配作esikf后验刷新: 进行的3层金字塔的光度的esikf后验刷新
                 //  4,基于F2M的匹配向匹配的体素点添加新patch观测.
-                lidar_selector->detect(LidarMeasures.measures.back().img, pcl_wait_pub);
+                lidar_selector->detect(LidarMeasures.measures.back().img, pcl_wait_pub);//pcl_wait_pub是上一lidar帧[已经转到世界系]
                 // int size = lidar_selector->map_cur_frame_.size();
                 int size_sub = lidar_selector->sub_map_cur_frame_.size();
                 
